@@ -106,7 +106,8 @@ defmodule GnServer.Router.GnExec do
         desc "Upload files"
         params do
           requires :file, type: File
-          exactly_one_of [:file]
+          requires :checksum, type: String
+          # exactly_one_of [:file, :checksum]
         end
         post do
           static_path = Application.get_env(:gn_server, :static_path_prefix)
@@ -115,8 +116,19 @@ defmodule GnServer.Router.GnExec do
             false -> %{error: :invalid_token}
             true ->
               file = params[:file]
-              File.cp!(file.path,Path.join(token_path, file.filename))
-              %{token: params[:token], sync: "ok"}
+              # TODO compute the checksum for the uploaded file, it is not possible to know tht size of the file at priori
+              checksum_remote = params[:checksum]
+              case GnExec.Md5.file(file.path) do
+                {:ok, checksum_local} ->
+                  if checksum_remote == checksum_local do
+                    File.cp!(file.path,Path.join(token_path, file.filename))
+                    %{token: params[:token], sync: "ok"}
+                  else
+                    %{token: params[:token], sync: "bad_checksum"}
+                  end
+                {:error, reason}   ->
+                  %{token: params[:token], sync: "file_not_exists"}
+              end
             end
             json(conn, response)
         end #uploads
@@ -132,7 +144,7 @@ defmodule GnServer.Router.GnExec do
         case GnExec.Rest.Job.validate(params[:command]) do
           {:error, :noprogram } -> json(conn, %{error: :noprogram})
           {:ok, module } ->
-            job = GnExec.Rest.Job.new(params[:command], ["."])
+            job = GnExec.Rest.Job.new(params[:command])
             path = Path.join(static_path, job.token)
             File.mkdir_p(path)
             File.touch!(Path.join(path,"STDOUT"))
