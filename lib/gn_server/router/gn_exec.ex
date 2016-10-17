@@ -107,6 +107,7 @@ defmodule GnServer.Router.GnExec do
         params do
           requires :file, type: File
           requires :checksum, type: String
+          optional :single, type: Boolean # This parameters is used when the client wants to transfer just a single file and not the whole archive into the job directory
           # exactly_one_of [:file, :checksum]
         end
         post do
@@ -121,13 +122,20 @@ defmodule GnServer.Router.GnExec do
               case GnExec.Md5.file(file.path) do
                 {:ok, checksum_local} ->
                   if checksum_remote == checksum_local do
-                    File.cp!(file.path,Path.join(token_path, file.filename))
+                    # Assuming that the file is an archive by default that must be decompressed in the
+                    # TODO: validate that file is a tar gzipped archive
+                    if params[:single] do
+                      File.cp!(file.path,Path.join(token_path, file.filename))
+                    else
+                      System.cmd("tar", ["--strip-components=1","-C", token_path, "-xzvf", file.path] )
+                    end
+
                     %{token: params[:token], sync: "ok"}
                   else
-                    %{token: params[:token], sync: "bad_checksum"}
+                    %{token: params[:token], sync: "echecksum"}
                   end
                 {:error, reason}   ->
-                  %{token: params[:token], sync: "file_not_exists"}
+                  %{token: params[:token], sync: reason}
               end
             end
             json(conn, response)
