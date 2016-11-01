@@ -188,8 +188,13 @@ defmodule GnServer.Router.GnExec do
         case GnExec.Job.validate(params[:command]) do
           {:error, :noprogram } -> json(conn, %{error: :noprogram})
           {:ok, module } ->
-            result =  GnExec.Queue.push GnExec.Job.new(params[:command], String.split(params[:arguments], " "))
-            json(conn, result)
+            job = GnExec.Job.new(params[:command], String.split(params[:arguments], " "))
+            if job.token == params[:token] do
+              result =  GnExec.Queue.push job
+              json(conn, result)
+            else
+              json(conn, "etokenmismatch")
+            end
         end
       end
     end
