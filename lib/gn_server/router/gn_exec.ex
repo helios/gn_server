@@ -146,13 +146,29 @@ defmodule GnServer.Router.GnExec do
 
     end #program
 
-    route_param :command, type: String do
-      get "dataset.json" do
+
+#deprecated
+    # route_param :command, type: String do
+    #   get "dataset.json" do
+    #     static_path = Application.get_env(:gn_server, :static_path_prefix)
+    #     case GnExec.Job.validate(params[:command]) do
+    #       {:error, :noprogram } -> json(conn, %{error: :noprogram})
+    #       {:ok, module } ->
+    #         job = GnExec.Job.new(params[:command])
+    #         path = Path.join(static_path, job.token)
+    #         File.mkdir_p(path)
+    #         File.touch!(Path.join(path,"STDOUT"))
+    #         File.touch!(Path.join(path,"status.json"))
+    #         json(conn, job)
+    #     end
+    #   end
+    # end
+
+      get do
         static_path = Application.get_env(:gn_server, :static_path_prefix)
-        case GnExec.Rest.Job.validate(params[:command]) do
-          {:error, :noprogram } -> json(conn, %{error: :noprogram})
-          {:ok, module } ->
-            job = GnExec.Rest.Job.new(params[:command])
+        case GnExec.Queue.pop do
+          :empty -> json(conn, :empty)
+          {:value, job} ->
             path = Path.join(static_path, job.token)
             File.mkdir_p(path)
             File.touch!(Path.join(path,"STDOUT"))
@@ -161,7 +177,24 @@ defmodule GnServer.Router.GnExec do
         end
       end
 
+
+    desc "Place a new job in the queue"
+    params do
+      requires :token, type: String
+      requires :arguments, type: String
     end
+    route_param :command, type: String do
+      post do
+        case GnExec.Job.validate(params[:command]) do
+          {:error, :noprogram } -> json(conn, %{error: :noprogram})
+          {:ok, module } ->
+            result =  GnExec.Queue.push GnExec.Job.new(params[:command], String.split(params[:arguments], " "))
+            json(conn, result)
+        end
+      end
+    end
+
+
    end # gnexec
 
 
