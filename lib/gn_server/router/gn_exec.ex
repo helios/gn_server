@@ -78,6 +78,7 @@ defmodule GnServer.Router.GnExec do
             GnExec.Job.setupdir(job)
           end
           GnExec.Registry.retval(:write, params[:token], params[:retval])
+          GnExec.Registry.complete(params[:token])
           response = %{token: params[:token], retval: params[:retval] }
           json(conn, response)
         end
@@ -93,7 +94,7 @@ defmodule GnServer.Router.GnExec do
         post do
           static_path = Application.get_env(:gn_exec, :jobs_path_prefix)
           token_path = Path.join(static_path, params[:token])
-          IO.inspect params
+          # IO.inspect params
           response = case File.exists?(token_path) do
             false -> %{error: :invalid_token}
             true ->
@@ -113,10 +114,11 @@ defmodule GnServer.Router.GnExec do
                     if params[:single] do
                       File.cp!(file.path,Path.join(token_path, file.filename))
                     else
-                      System.cmd("tar", ["--strip-components=1","-C", token_path, "-xzvf", file.path] )
+                      {:ok, devnull} = File.open "/dev/null", [:write]
+                      System.cmd("tar", ["--strip-components=1","-C", token_path, "-xzvf", file.path], stderr_to_stdout: true, into: IO.stream(devnull, :line))
+                      File.close devnull
                     end
-                    # GnExec.Queue.completed token
-                    # GnExec.Registry.complete params[:token]
+                    GnExec.Registry.transferred params[:token]
                     %{token: params[:token], sync: "ok"}
                   else
                     GnExec.Registry.error params[:token]
@@ -126,7 +128,7 @@ defmodule GnServer.Router.GnExec do
                   %{token: params[:token], sync: reason}
               end
             end
-            IO.inspect response
+            # IO.inspect response
             json(conn, response)
         end #uploads
 
