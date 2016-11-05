@@ -29,34 +29,22 @@ defmodule GnServer.Router.GnExec do
    namespace :gnexec do
     namespace :program do
       route_param :token, type: String do
-        get "status.json" do
-          static_path = Application.get_env(:gn_server, :static_path_prefix)
-          status_path = Path.join(static_path, params[:token])
-          status = case File.exists?(status_path) do
-            false -> %{error: :invalid_token}
-            true ->
-              status_path_file = Path.join(status_path, "status.json")
-              Poison.Parser.parse!(File.read!(status_path_file),keys: :atoms!)
-          end
-          json(conn, status)
+        get "progress.json" do
+          json(conn, GnExec.Registry.progress(:read, params[:token]))
         end #get status.json
 
-        desc "Update a status"
+        desc "Update a progress"
         params do
           requires :progress, type: Integer
         end
-        put "status.json" do
-          static_path = Application.get_env(:gn_server, :static_path_prefix)
-          status_path = Path.join(static_path, params[:token])
-          response = case File.exists?(status_path) do
-            false -> %{error: :invalid_token}
-            true ->
-              status_path_file = Path.join(status_path, "status.json")
-              File.write(status_path_file, Poison.encode!(%{progress: params[:progress]}), [:binary])
-              %{token: params[:token], progress: params[:progress] }
+        put "progress.json" do
+          token = params[:token]
+          {:ok, {job, status}} = GnExec.Registry.get(token)
+          if :ok == GnExec.Registry.mark(token, :running) do
+              GnExec.Job.setupdir(job)# Create the directories before setting the stare to running
           end
-
-          json(conn, response)
+          GnExec.Registry.progress(:write, token, params[:progress])
+          json(conn, :updated)
         end
 
         get "results.json" do
@@ -70,16 +58,13 @@ defmodule GnServer.Router.GnExec do
           requires :stdout, type: String
         end
         put "STDOUT" do
-          static_path = Application.get_env(:gn_server, :static_path_prefix)
-          token_path = Path.join(static_path, params[:token])
-          response = case File.exists?(token_path) do
-            false -> %{error: :invalid_token}
-            true ->
-              file_path = Path.join(token_path, "STDOUT")
-              File.write!(file_path, params[:stdout], [:binary, :append])
-              %{token: params[:token], status: "stdout updated" }
+          # It should not be possible to change state if it is not :queued
+          if :ok == GnExec.Registry.mark(params[:token], :running) do
+            {:ok, {job, status}} = GnExec.Registry.get params[:token]
+            GnExec.Job.setupdir(job)
           end
-
+          GnExec.Registry.stdout(:write, params[:token], params[:stdout])
+          response = %{token: params[:token], status: "stdout updated" }
           json(conn, response)
         end
 
@@ -88,17 +73,12 @@ defmodule GnServer.Router.GnExec do
           requires :retval, type: String
         end
         put "retval.json" do
-          static_path = Application.get_env(:gn_server, :static_path_prefix)
-          token_path = Path.join(static_path, params[:token])
-          response = case File.exists?(token_path) do
-            false -> %{error: :invalid_token}
-            true ->
-              file_path = Path.join(token_path, "retval.json")
-              # IO.puts params[:retval]
-              File.write!(file_path, Poison.encode!(%{retval: params[:retval]}), [:binary])
-              %{token: params[:token], retval: params[:retval] }
+          if :ok == GnExec.Registry.mark(params[:token], :running) do
+            {:ok, {job, status}} = GnExec.Registry.get params[:token]
+            GnExec.Job.setupdir(job)
           end
-
+          GnExec.Registry.retval(:write, params[:token], params[:retval])
+          response = %{token: params[:token], retval: params[:retval] }
           json(conn, response)
         end
 
@@ -111,8 +91,9 @@ defmodule GnServer.Router.GnExec do
           # exactly_one_of [:file, :checksum]
         end
         post do
-          static_path = Application.get_env(:gn_server, :static_path_prefix)
+          static_path = Application.get_env(:gn_exec, :jobs_path_prefix)
           token_path = Path.join(static_path, params[:token])
+          IO.inspect params
           response = case File.exists?(token_path) do
             false -> %{error: :invalid_token}
             true ->
@@ -124,20 +105,28 @@ defmodule GnServer.Router.GnExec do
                   if checksum_remote == checksum_local do
                     # Assuming that the file is an archive by default that must be decompressed in the
                     # TODO: validate that file is a tar gzipped archive
+                    if :ok == GnExec.Registry.mark(params[:token], :running) do
+                      {:ok, {job, status}} = GnExec.Registry.get params[:token]
+                      GnExec.Job.setupdir(job)
+                    end
+
                     if params[:single] do
                       File.cp!(file.path,Path.join(token_path, file.filename))
                     else
                       System.cmd("tar", ["--strip-components=1","-C", token_path, "-xzvf", file.path] )
                     end
-
+                    # GnExec.Queue.completed token
+                    # GnExec.Registry.complete params[:token]
                     %{token: params[:token], sync: "ok"}
                   else
+                    GnExec.Registry.error params[:token]
                     %{token: params[:token], sync: "echecksum"}
                   end
                 {:error, reason}   ->
                   %{token: params[:token], sync: reason}
               end
             end
+            IO.inspect response
             json(conn, response)
         end #uploads
 
@@ -146,52 +135,31 @@ defmodule GnServer.Router.GnExec do
 
     end #program
 
-
-#deprecated
-    # route_param :command, type: String do
-    #   get "dataset.json" do
-    #     static_path = Application.get_env(:gn_server, :static_path_prefix)
-    #     case GnExec.Job.validate(params[:command]) do
-    #       {:error, :noprogram } -> json(conn, %{error: :noprogram})
-    #       {:ok, module } ->
-    #         job = GnExec.Job.new(params[:command])
-    #         path = Path.join(static_path, job.token)
-    #         File.mkdir_p(path)
-    #         File.touch!(Path.join(path,"STDOUT"))
-    #         File.touch!(Path.join(path,"status.json"))
-    #         json(conn, job)
-    #     end
-    #   end
-    # end
-
-      get do
-        static_path = Application.get_env(:gn_server, :static_path_prefix)
-        case GnExec.Queue.pop do
+    desc "Get a job form the Queue, it's FIFO. Job transit from :queued status to :requested and the directories are prepared to accept the job data."
+    get do
+        case GnExec.Registry.next do
           :empty -> json(conn, :empty)
-          {:value, job} ->
-            path = Path.join(static_path, job.token)
-            File.mkdir_p(path)
-            File.touch!(Path.join(path,"STDOUT"))
-            File.touch!(Path.join(path,"status.json"))
+          {job, status} ->
             json(conn, job)
         end
       end
 
 
-    desc "Place a new job in the queue"
+    desc "Place a new job in the queue (submit)"
     params do
       requires :token, type: String
       requires :arguments, type: String
     end
     route_param :command, type: String do
       post do
+
         case GnExec.Job.validate(params[:command]) do
           {:error, :noprogram } -> json(conn, %{error: :noprogram})
           {:ok, module } ->
-            job = GnExec.Job.new(params[:command], String.split(params[:arguments], " "))
+            {:ok, job} = GnExec.Job.new(params[:command], String.split(params[:arguments]))
             if job.token == params[:token] do
-              result =  GnExec.Queue.push job
-              json(conn, result)
+              GnExec.Registry.put job # does not return anything, check the status
+              json(conn, GnExec.Registry.status(job.token))
             else
               json(conn, "etokenmismatch")
             end

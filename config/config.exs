@@ -50,3 +50,7 @@ config :gn_server,
   version: String.strip(File.read!("VERSION")),
   # The static path is local to the source repo by default
   static_path_prefix: "./test/data/input"
+
+config :gn_exec,
+    gn_server_url: "http://127.0.0.1:8880/gnexec/",
+    jobs_path_prefix: "./test/data/input"
