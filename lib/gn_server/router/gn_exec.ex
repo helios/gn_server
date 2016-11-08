@@ -1,5 +1,6 @@
 defmodule GnServer.Router.GnExec do
   use Maru.Router
+  require Logger
 
   IO.puts "Setup routing for GnExec REST APIs"
 
@@ -73,14 +74,20 @@ defmodule GnServer.Router.GnExec do
           requires :retval, type: String
         end
         put "retval.json" do
-          if :ok == GnExec.Registry.mark(params[:token], :running) do
-            {:ok, {job, status}} = GnExec.Registry.get params[:token]
-            GnExec.Job.setupdir(job)
-          end
-          GnExec.Registry.retval(:write, params[:token], params[:retval])
-          GnExec.Registry.complete(params[:token])
-          response = %{token: params[:token], retval: params[:retval] }
-          json(conn, response)
+          response = case GnExec.Registry.get(params[:token]) do
+            {:ok, {job, :transferred}} ->
+              GnExec.Registry.retval(:write, params[:token], params[:retval])
+              GnExec.Registry.complete(params[:token])
+              %{result: :ok, info: :completed}
+            {:ok, {job, status}} ->
+              Logger.debug "Error token #{job.token} has status #{status}."
+              %{result: :error, info: status}
+            # remember that :enot means not exists
+            :error ->
+              Logger.debug "Error token #{params[:token]} does not exist."
+              %{result: :error, info: :note}
+            end
+          json(conn, %{token: params[:token], retval: params[:retval], reply: response })
         end
 
 
