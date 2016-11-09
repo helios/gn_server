@@ -39,12 +39,11 @@ defmodule GnServer.Router.GnExec do
           requires :progress, type: Integer
         end
         put "progress.json" do
-          token = params[:token]
-          {:ok, {job, status}} = GnExec.Registry.get(token)
-          if :ok == GnExec.Registry.mark(token, :running) do
+          if :ok == GnExec.Registry.mark(params[:token], :running) do
+              {:ok, {job, _status}} = GnExec.Registry.get(params[:token])
               GnExec.Job.setupdir(job)# Create the directories before setting the stare to running
           end
-          GnExec.Registry.progress(:write, token, params[:progress])
+          GnExec.Registry.progress(:write, params[:token], params[:progress])
           json(conn, :updated)
         end
 
@@ -61,7 +60,7 @@ defmodule GnServer.Router.GnExec do
         put "STDOUT" do
           # It should not be possible to change state if it is not :queued
           if :ok == GnExec.Registry.mark(params[:token], :running) do
-            {:ok, {job, status}} = GnExec.Registry.get params[:token]
+            {:ok, {job, _status}} = GnExec.Registry.get params[:token]
             GnExec.Job.setupdir(job)
           end
           GnExec.Registry.stdout(:write, params[:token], params[:stdout])
@@ -75,10 +74,18 @@ defmodule GnServer.Router.GnExec do
         end
         put "retval.json" do
           response = case GnExec.Registry.get(params[:token]) do
-            {:ok, {job, :transferred}} ->
+            {:ok, {_job, :transferred}} ->
               GnExec.Registry.retval(:write, params[:token], params[:retval])
               GnExec.Registry.complete(params[:token])
               %{result: :ok, info: :completed}
+            {:ok, {job, :requested}} -> # it means that the jobs does not produced anything in output
+            # in case of a Ls for instance, an empty directory does not produce anything
+            # TODO: maybe is better to place a checkpoint where the 'loop' of data output is...
+              GnExec.Job.setupdir(job)
+              GnExec.Registry.mark params[:token], :running
+              GnExec.Registry.transferred params[:token]
+              GnExec.Registry.retval :write, params[:token], params[:retval]
+              GnExec.Registry.complete params[:token]
             {:ok, {job, status}} ->
               Logger.debug "Error token #{job.token} has status #{status}."
               %{result: :error, info: status}
@@ -113,11 +120,11 @@ defmodule GnServer.Router.GnExec do
                   if checksum_remote == checksum_local do
                     # Assuming that the file is an archive by default that must be decompressed in the
                     # TODO: validate that file is a tar gzipped archive
-                    if :ok == GnExec.Registry.mark(params[:token], :running) do
-                      {:ok, {job, status}} = GnExec.Registry.get params[:token]
-                      GnExec.Job.setupdir(job)
-                    end
-
+                    # if :ok == GnExec.Registry.mark(params[:token], :running) do
+                    #   {:ok, {job, status}} = GnExec.Registry.get params[:token]
+                    #   GnExec.Job.setupdir(job)
+                    # end
+                    #
                     if params[:single] do
                       File.cp!(file.path,Path.join(token_path, file.filename))
                     else
@@ -148,7 +155,7 @@ defmodule GnServer.Router.GnExec do
     get do
         case GnExec.Registry.next do
           :empty -> json(conn, :empty)
-          {job, status} ->
+          {job, _status} ->
             json(conn, job)
         end
       end
@@ -164,7 +171,7 @@ defmodule GnServer.Router.GnExec do
 
         case GnExec.Job.validate(params[:command]) do
           {:error, :noprogram } -> json(conn, %{error: :noprogram})
-          {:ok, module } ->
+          {:ok, _module } ->
             {:ok, job} = GnExec.Job.new(params[:command], String.split(params[:arguments]))
             if job.token == params[:token] do
               GnExec.Registry.put job # does not return anything, check the status
