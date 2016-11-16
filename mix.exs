@@ -14,7 +14,7 @@ defmodule GnServer.Mixfile do
   #
   # Type "mix help compile.app" for more information
   def application do
-    [applications: [:logger, :cachex, :maru, :mariaex, :ecto],
+    [applications: [:logger, :cachex, :maru, :mariaex, :ecto, :gn_exec],
      mod: {GnServer,[]}]
   end
 

@@ -32,3 +32,7 @@ config :gn_server,
   static_path_prefix: "./test/data/input",
   cache_dir: "/var/tmp/gn_server",
   upload_dir: "/var/tmp/gn_server_data"
+
+config :gn_exec,
+    gn_server_url: "http://127.0.0.1:8880/gnexec/",
+    jobs_path_prefix: "./test/data/input"
