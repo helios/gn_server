@@ -10,9 +10,12 @@ defmodule GnServer.API do
   mount GnServer.Router.Biodalliance.Stylesheets
   mount GnServer.Router.Biodalliance.QTL
   mount GnServer.Router.Biodalliance.Static
-  mount GnServer.Router.GnExec 
+  # mount GnServer.Router.GnExec
 
   IO.puts "Starting server"
+  namespace :gnexec do
+    mount GnExec.Web.API
+  end
 
   rescue_from :all, as: e do
     IO.inspect e
